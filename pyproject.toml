@@ -6,7 +6,7 @@ authors = ["Ralf Kellner <ralf.kellner@uni-passau.de>"]
 readme = "README.md"
 
 [tool.poetry.dependencies]
-python = "^3.11"
+python = "^3.10"
 gensim = "^4.3.3"
 pandas = "^2.2.3"
 statsmodels = "^0.14.4"
