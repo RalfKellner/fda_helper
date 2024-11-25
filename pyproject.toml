@@ -1,0 +1,23 @@
+[tool.poetry]
+name = "fda-helper"
+version = "0.1.0"
+description = "Useful classes and methods for financial data analysis"
+authors = ["Ralf Kellner <ralf.kellner@uni-passau.de>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.11"
+gensim = "^4.3.3"
+pandas = "^2.2.3"
+statsmodels = "^0.14.4"
+scikit-learn = "^1.5.2"
+requests = "^2.32.3"
+scrapy = "^2.12.0"
+
+
+[tool.poetry.group.dev.dependencies]
+ipykernel = "^6.29.5"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
