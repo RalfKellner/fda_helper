@@ -10,6 +10,9 @@ import numpy as np
 import pandas as pd
 import pickle
 import os
+import json
+from collections import defaultdict
+from importlib.resources import files
 from typing import Callable, Dict, Generator, List, Optional, Union, Any
 from abc import ABC, abstractmethod
 import logging
@@ -31,6 +34,7 @@ class Corpus(ABC):
         dictionary_arguments: Optional[Dict[str, Union[int, float]]] = None,
         tfidf_arguments_smart: Optional[str] = None,
         yield_documents: bool = False,
+        lmcd_countings_only: bool = False,
         train_corpus: bool = True
     ) -> None:
         """
@@ -46,6 +50,11 @@ class Corpus(ABC):
             yield_documents (bool): Whether to yield TaggedDocument objects. Only needed when we want to train a Doc2Vec model.
             train_corpus (bool): Whether to initialize models and preprocess the corpus. Set to false when loading and if we want to use dictionaries, phrases, tfidf, etc. from training corpus for test corpus
         """
+
+        if create_dictionary_and_countings and lmcd_countings_only:
+            raise ValueError("You should either use a common dictionary or the LMcD dictionary for frequency models, not both.")
+
+
         self.preprocessor = preprocessor
         self.n_documents = self.__len__()
         self.has_phrases_model = False
@@ -59,6 +68,7 @@ class Corpus(ABC):
         }
         self.tfidf_arguments_smart = tfidf_arguments_smart or "ntn"
         self.yield_documents = yield_documents
+        self.lmcd_countings_only = lmcd_countings_only
         self.train_corpus = train_corpus
         self.logger = logging.getLogger(self.__class__.__name__)
 
@@ -83,6 +93,12 @@ class Corpus(ABC):
                 self.logger.info("Dictionary has been built. Creating bag-of-words and TF-IDF representations.")
                 self.tfidf_model = TfidfModel(self.bow(), smartirs=self.tfidf_arguments_smart)
                 self.logger.info("Bag-of-words and TF-IDF vectors are ready.")
+            if self.lmcd_countings_only:
+                self._load_lmcd_dictionary()
+                self.dictionary = Dictionary(self._yield_tokens())
+                self.dictionary.filter_tokens(bad_ids=[tokenid for tokenid, token in self.dictionary.iteritems() if token not in self.lmcd_words])
+
+                
 
     @abstractmethod
     def _document_loader(self) -> Generator[str, None, None]:
@@ -121,6 +137,18 @@ class Corpus(ABC):
         self.phrases_model = Phrases(self._yield_tokens(), **self.phrases_arguments)
         self.has_phrases_model = True
 
+    def _load_lmcd_dictionary(self):
+        json_path = files("fda_helper.data").joinpath("LMcD_word_list.json")
+        with open(json_path, "r") as file:
+            self.lmcd = json.load(file)
+        self.lmcd_words = set()
+        self.word_to_category = {}
+        for category, words in self.lmcd.items():
+            self.lmcd_words.update(words)
+            for word in words:
+                self.word_to_category[word] = category
+
+
     def bow(self) -> Generator[List[tuple], None, None]:
         """Yield bag-of-words representations of the documents."""
         for doc in self._yield_tokens():
@@ -152,6 +180,32 @@ class Corpus(ABC):
         tfidf = self.tfidf_model[self.bow()]
         tfidf_matrix = corpus2csc(tfidf, num_terms=len(self.dictionary)).transpose()
         return tfidf_matrix if sparse else tfidf_matrix.toarray()
+    
+    def lmcd_counts(self):
+        if not(self.lmcd_countings_only):
+            raise ValueError("You need to set lmcd_countings_only = True to use this method.")
+
+        categories = list(self.lmcd.keys())
+        n_documents = self.__len__()
+        category_matrix = np.zeros((n_documents, len(categories)), dtype=int)
+
+        for idx, bow in enumerate(self.bow()):
+            category_freq = defaultdict(int)
+            for word_id, freq in bow:
+                word = self.dictionary[word_id]
+                category = self.word_to_category.get(word)
+                if category:  # Only consider words with a mapped category
+                    category_freq[category] += freq
+            for category_idx, category in enumerate(categories):
+                category_matrix[idx, category_idx] = category_freq.get(category, 0)
+
+        n_tokens = []
+        for doc in self._yield_tokens():
+            n_tokens.append(len(doc))
+        n_tokens = np.array(n_tokens).reshape(-1, 1)
+        lmcd_counts_df = pd.DataFrame(np.concatenate((category_matrix, n_tokens), axis = 1), columns = list(self.lmcd.keys()) + ["n_tokens"])
+
+        return lmcd_counts_df
 
     def get_dictionary_vocabulary(self) -> Optional[List[str]]:
         """
@@ -238,6 +292,7 @@ class SQLiteCorpus(Corpus):
         dictionary_arguments: Optional[Dict[str, Union[int, float]]] = None,
         tfidf_arguments_smart: Optional[str] = None,
         yield_documents: bool = False,
+        lmcd_countings_only: bool = False,
         train_corpus: bool = True
     ) -> None:
         """
@@ -265,6 +320,7 @@ class SQLiteCorpus(Corpus):
             dictionary_arguments=dictionary_arguments,
             tfidf_arguments_smart=tfidf_arguments_smart,
             yield_documents=yield_documents,
+            lmcd_countings_only = lmcd_countings_only,
             train_corpus=train_corpus
         )
 
@@ -338,6 +394,7 @@ class SQLiteCorpus(Corpus):
             dictionary_arguments=data["dictionary_arguments"],
             tfidf_arguments_smart=data["tfidf_arguments_smart"],
             yield_documents=data["yield_documents"],
+            lmcd_countings_only = data["lmcd_countings_only"],
             train_corpus=False
         )
 
@@ -353,6 +410,7 @@ class SQLiteCorpus(Corpus):
                 "dictionary_arguments",
                 "tfidf_arguments_smart",
                 "yield_documents",
+                "lmcd_countings_only",
                 "train_corpus"
             }:
                 setattr(instance, key, value)
@@ -384,6 +442,7 @@ class ListCorpus(Corpus):
         dictionary_arguments: Optional[Dict[str, Union[int, float]]] = None,
         tfidf_arguments_smart: Optional[str] = None,
         yield_documents: bool = False,
+        lmcd_countings_only: bool = False, 
         train_corpus: bool = True
     ) -> None:
         """
@@ -409,6 +468,7 @@ class ListCorpus(Corpus):
             dictionary_arguments=dictionary_arguments,
             tfidf_arguments_smart=tfidf_arguments_smart,
             yield_documents=yield_documents,
+            lmcd_countings_only = lmcd_countings_only,
             train_corpus=train_corpus
         )
 
@@ -448,6 +508,7 @@ class ListCorpus(Corpus):
             dictionary_arguments=data["dictionary_arguments"],
             tfidf_arguments_smart=data["tfidf_arguments_smart"],
             yield_documents=data["yield_documents"],
+            lmcd_countings_only = data["lmcd_countings_only"],
             train_corpus=False
         )
 
@@ -462,6 +523,7 @@ class ListCorpus(Corpus):
                 "dictionary_arguments",
                 "tfidf_arguments_smart",
                 "yield_documents",
+                "lmcd_countings_only",
                 "train_corpus"
             }:
                 setattr(instance, key, value)
