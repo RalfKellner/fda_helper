@@ -138,6 +138,7 @@ class Corpus(ABC):
         self.has_phrases_model = True
 
     def _load_lmcd_dictionary(self):
+        """Import the Loughran, MacDonald dictionary."""
         json_path = files("fda_helper.data").joinpath("LMcD_word_list.json")
         with open(json_path, "r") as file:
             self.lmcd = json.load(file)
@@ -182,13 +183,21 @@ class Corpus(ABC):
         return tfidf_matrix if sparse else tfidf_matrix.toarray()
     
     def lmcd_counts(self):
+        """
+        Count Loughran, MacDonald word frequencies and transform them to a pandas DataFrame.
+
+        Returns:
+            pandas.DataFrame: pandas dataframe with rows for each document and columns for the countings of words which fall into one of their categories.
+        """
         if not(self.lmcd_countings_only):
             raise ValueError("You need to set lmcd_countings_only = True to use this method.")
 
+        # set up a counting array for all categories
         categories = list(self.lmcd.keys())
         n_documents = self.__len__()
         category_matrix = np.zeros((n_documents, len(categories)), dtype=int)
 
+        # count if tokens from one of the categories are identified
         for idx, bow in enumerate(self.bow()):
             category_freq = defaultdict(int)
             for word_id, freq in bow:
@@ -199,10 +208,12 @@ class Corpus(ABC):
             for category_idx, category in enumerate(categories):
                 category_matrix[idx, category_idx] = category_freq.get(category, 0)
 
+        # determine the number of tokens per document
         n_tokens = []
         for doc in self._yield_tokens():
             n_tokens.append(len(doc))
         n_tokens = np.array(n_tokens).reshape(-1, 1)
+        # build dataframe
         lmcd_counts_df = pd.DataFrame(np.concatenate((category_matrix, n_tokens), axis = 1), columns = list(self.lmcd.keys()) + ["n_tokens"])
 
         return lmcd_counts_df
